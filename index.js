@@ -13,6 +13,25 @@ const floashLoanLiquidatorContract = new ethers.Contract(getFlashLoanLiquidatorA
 const positionLogInterval = 1 * 6000 // log positions each 1 min
 const enableNonFlashloanLiquidation = false
 
+// positions = {
+//   isUpdating: false,
+//   tokenId: BigNumber { _hex: '0x3afc68', _isBigNumber: true },
+//   liquidity: BigNumber { _hex: '0x0428191afb3e18', _isBigNumber: true },
+//   tickLower: 263790,
+//   tickUpper: 264230,
+//   tickSpacing: 10,
+//   fee: 500,
+//   token0: '0x2f2a2543b76a4166549f7aab2e75bef0aefc5b0f',
+//   token1: '0x82af49447d8a07e3bd95bd0d56f35241523fbab1',
+//   decimals0: 8,
+//   decimals1: 18,
+//   poolAddress: '0x2f5e87c9312fa29aed5c179e456625d79015299c',
+//   debtShares: BigNumber { _hex: '0xaf1b87a4', _isBigNumber: true },
+//   owner: '0x9d9dE2CeFbe4C0a8401D58ee41A332DeA3De2c05',
+//   collateralFactorX32: 3328599654,
+//   fees0: BigNumber { _hex: '0x03a4', _isBigNumber: true },
+//   fees1: BigNumber { _hex: '0x01a4d05563a076', _isBigNumber: true }
+// }
 const positions = {}
 const cachedTokenDecimals = {}
 const cachedCollateralFactorX32 = {}
@@ -29,36 +48,24 @@ async function updateDebtExchangeRate() {
 }
 
 async function loadPositions() {
-
   let adds = (await getAllLogs(v3VaultContract.filters.Add())).filter(v => v !== 'latest')
-  console.log(adds)
   let removes = (await getAllLogs(v3VaultContract.filters.Remove())).filter(v => v !== 'latest')
   let loadedPositions = 0
 
-
   // from newest to oldest - process each event once - remove deactivated positions
   for (let i = adds.length - 1; i > 0; i--) {
-
     const event = adds[i];
+    const tokenId = v3VaultContract.interface.parseLog(event).args.tokenId;
+    const isActive = removes.filter(e => tokenId.eq(v3VaultContract.interface.parseLog(e).args.tokenId)
+      && (e.blockNumber > event.blockNumber || (e.blockNumber == event.blockNumber && e.logIndex > event.logIndex))).length === 0
 
-    if (event !== 'latest') {
-
-      const tokenId = v3VaultContract.interface.parseLog(event).args.tokenId;
-
-
-      const isActive = removes.filter(e => tokenId.eq(v3VaultContract.interface.parseLog(e).args.tokenId)
-        && (e.blockNumber > event.blockNumber || (e.blockNumber == event.blockNumber && e.logIndex > event.logIndex))).length === 0
-
-      if (isActive) {
-        await updatePosition(tokenId)
-        loadedPositions++
-      }
-      adds = adds.filter(e => !v3VaultContract.interface.parseLog(e).args.tokenId.eq(tokenId))
-      logWithTimestamp(`Loaded ${loadedPositions} active positions`)
+    if (isActive) {
+      await updatePosition(tokenId)
+      loadedPositions++
     }
-
+    adds = adds.filter(e => !v3VaultContract.interface.parseLog(e).args.tokenId.eq(tokenId))
+    logWithTimestamp(`Loaded ${loadedPositions} active positions`)
   }
-
 }
 
 
@@ -78,16 +85,23 @@ async function updatePosition(tokenId) {
 
   try {
     const debtShares = await v3VaultContract.loans(tokenId)
+
     if (debtShares.gt(0)) {
       // add or update
       const { liquidity, tickLower, tickUpper, fee, token0, token1 } = await npmContract.positions(tokenId);
       const tickSpacing = getTickSpacing(fee)
+      // 0x2f5e87c9312fa29aed5c179e456625d79015299c
       const poolAddress = await getPool(token0, token1, fee)
+
 
       const owner = await v3VaultContract.ownerOf(tokenId)
 
+
+
       // get current fees - for estimation
-      const fees = await npmContract.connect(v3VaultContract.address).callStatic.collect([tokenId, ethers.constants.AddressZero, BigNumber.from(2).pow(128).sub(1), BigNumber.from(2).pow(128).sub(1)])
+      const fees = await npmContract.connect(v3VaultContract.address).callStatic
+        .collect([tokenId, ethers.constants.AddressZero, BigNumber.from(2).pow(128).sub(1), BigNumber.from(2).pow(128).sub(1)])
+
 
       if (cachedTokenDecimals[token0] === undefined) {
         cachedTokenDecimals[token0] = await getTokenDecimals(token0)
@@ -95,6 +109,8 @@ async function updatePosition(tokenId) {
       if (cachedTokenDecimals[token1] === undefined) {
         cachedTokenDecimals[token1] = await getTokenDecimals(token1)
       }
+
+
       const decimals0 = cachedTokenDecimals[token0]
       const decimals1 = cachedTokenDecimals[token1]
 
@@ -107,7 +123,9 @@ async function updatePosition(tokenId) {
         cachedCollateralFactorX32[token1] = tokenConfig.collateralFactorX32
       }
 
-      const collateralFactorX32 = cachedCollateralFactorX32[token0] < cachedCollateralFactorX32[token1] ? cachedCollateralFactorX32[token0] : cachedCollateralFactorX32[token1]
+
+      const collateralFactorX32 = cachedCollateralFactorX32[token0] < cachedCollateralFactorX32[token1] ?
+        cachedCollateralFactorX32[token0] : cachedCollateralFactorX32[token1]
 
       positions[tokenId] = { ...positions[tokenId], tokenId, liquidity, tickLower, tickUpper, tickSpacing, fee, token0: token0.toLowerCase(), token1: token1.toLowerCase(), decimals0, decimals1, poolAddress, debtShares, owner, collateralFactorX32, fees0: fees.amount0, fees1: fees.amount1 }
 
@@ -123,6 +141,7 @@ async function updatePosition(tokenId) {
   if (positions[tokenId]) {
     positions[tokenId].isUpdating = false
   }
+
 }
 
 // checks position 
@@ -340,7 +359,7 @@ async function run() {
 
   await loadPositions()
 
-  console.log(1111)
+
   setInterval(async () => { await updateDebtExchangeRate() }, 60000)
 
   // Set up regular interval checks
