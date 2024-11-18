@@ -1,14 +1,14 @@
 require('dotenv').config()
 const { ethers, BigNumber } = require('ethers')
-const { logWithTimestamp } = require('./lib/common')
+const { logWithTimestamp } = require('../lib/common')
 const { quoteUniversalRouter, registerErrorHandler, npmContract, provider, signer, setupWebsocket,
   getPool, getAllLogs, getPoolPrice, getAmounts, getTokenAssetPriceX96,
   getTickSpacing, getFlashloanPoolOptions, getV3VaultAddress, getFlashLoanLiquidatorAddress,
   executeTx, getTokenDecimals, getTokenSymbol, getPoolToToken,
-  getRevertUrlForDiscord, getExplorerUrlForDiscord, Q32, Q96 } = require('./lib/common')
+  getRevertUrlForDiscord, getExplorerUrlForDiscord, Q32, Q96 } = require('../lib/common')
 
-const v3VaultContract = new ethers.Contract(getV3VaultAddress(), require("./contracts/V3Vault.json").abi, provider)
-const floashLoanLiquidatorContract = new ethers.Contract(getFlashLoanLiquidatorAddress(), require("./contracts/FlashloanLiquidator.json").abi, provider)
+const v3VaultContract = new ethers.Contract(getV3VaultAddress(), require("../contracts/V3Vault.json").abi, provider)
+const floashLoanLiquidatorContract = new ethers.Contract(getFlashLoanLiquidatorAddress(), require("../contracts/FlashloanLiquidator.json").abi, provider)
 
 const positionLogInterval = 1 * 6000 // log positions each 1 min
 const enableNonFlashloanLiquidation = false
@@ -48,8 +48,9 @@ async function updateDebtExchangeRate() {
 }
 
 async function loadPositions() {
-  let adds = (await getAllLogs(v3VaultContract.filters.Add())).filter(v => v !== 'latest')
-  let removes = (await getAllLogs(v3VaultContract.filters.Remove())).filter(v => v !== 'latest')
+  const from = 0;
+  let adds = (await getAllLogs(v3VaultContract.filters.Add(), from))
+  let removes = (await getAllLogs(v3VaultContract.filters.Remove(), from))
   let loadedPositions = 0
 
   // from newest to oldest - process each event once - remove deactivated positions
@@ -64,7 +65,7 @@ async function loadPositions() {
       loadedPositions++
     }
     adds = adds.filter(e => !v3VaultContract.interface.parseLog(e).args.tokenId.eq(tokenId))
-    logWithTimestamp(`Loaded ${loadedPositions} active positions`)
+    logWithTimestamp(`Loaded ${loadedPositions} active positions of ${adds.length}`)
   }
 }
 
