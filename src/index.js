@@ -48,7 +48,7 @@ async function updateDebtExchangeRate() {
 }
 
 async function loadPositions() {
-  const from = 0;
+  const from = 1000;
   let adds = (await getAllLogs(v3VaultContract.filters.Add(), from))
   let removes = (await getAllLogs(v3VaultContract.filters.Remove(), from))
   let loadedPositions = 0
@@ -308,55 +308,55 @@ async function run() {
   await updateDebtExchangeRate()
 
   // setup websockets for monitoring changes to positions
-  // setupWebsocket([
-  //   {
-  //     filter: v3VaultContract.filters.Add(),
-  //     handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
-  //   },
-  //   {
-  //     filter: v3VaultContract.filters.Remove(),
-  //     handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
-  //   },
-  //   {
-  //     filter: v3VaultContract.filters.Borrow(),
-  //     handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
-  //   },
-  //   {
-  //     filter: v3VaultContract.filters.Repay(),
-  //     handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
-  //   },
-  //   {
-  //     filter: v3VaultContract.filters.WithdrawCollateral(),
-  //     handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
-  //   },
-  //   {
-  //     filter: npmContract.filters.IncreaseLiquidity(),
-  //     handler: async (e) => {
-  //       const tokenId = npmContract.interface.parseLog(e).args.tokenId
-  //       if (positions[tokenId]) {
-  //         await updatePosition(tokenId)
-  //       }
-  //     }
-  //   }
-  // ], async function (poolAddress) {
+  setupWebsocket([
+    {
+      filter: v3VaultContract.filters.Add(),
+      handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
+    },
+    {
+      filter: v3VaultContract.filters.Remove(),
+      handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
+    },
+    {
+      filter: v3VaultContract.filters.Borrow(),
+      handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
+    },
+    {
+      filter: v3VaultContract.filters.Repay(),
+      handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
+    },
+    {
+      filter: v3VaultContract.filters.WithdrawCollateral(),
+      handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
+    },
+    {
+      filter: npmContract.filters.IncreaseLiquidity(),
+      handler: async (e) => {
+        const tokenId = npmContract.interface.parseLog(e).args.tokenId
+        if (positions[tokenId]) {
+          await updatePosition(tokenId)
+        }
+      }
+    }
+  ], async function (poolAddress) {
 
 
-  //   const time = new Date()
-  //   // every 5 minutes
-  //   if (time.getTime() > lastWSLifeCheck + 300000) {
-  //     logWithTimestamp("WS Live check", time.toISOString())
-  //     lastWSLifeCheck = time.getTime()
-  //   }
+    const time = new Date()
+    // every 5 minutes
+    if (time.getTime() > lastWSLifeCheck + 300000) {
+      logWithTimestamp("WS Live check", time.toISOString())
+      lastWSLifeCheck = time.getTime()
+    }
 
-  //   // if price reference pool price changed - check all positions with affected token
-  //   const affectedToken = getPoolToToken(asset, poolAddress)
-  //   if (affectedToken) {
-  //     const toCheckPositions = Object.values(positions).filter(p => p.token0 === affectedToken || p.token1 === affectedToken)
-  //     for (const position of toCheckPositions) {
-  //       await checkPosition(position)
-  //     }
-  //   }
-  // })
+    // if price reference pool price changed - check all positions with affected token
+    const affectedToken = getPoolToToken(asset, poolAddress)
+    if (affectedToken) {
+      const toCheckPositions = Object.values(positions).filter(p => p.token0 === affectedToken || p.token1 === affectedToken)
+      for (const position of toCheckPositions) {
+        await checkPosition(position)
+      }
+    }
+  })
 
   await loadPositions()
 
