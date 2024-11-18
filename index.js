@@ -1,11 +1,11 @@
 require('dotenv').config()
 const { ethers, BigNumber } = require('ethers')
-const { logWithTimestamp} = require('./lib/common')
-const { quoteUniversalRouter, registerErrorHandler, npmContract, provider, signer, setupWebsocket, 
-        getPool, getAllLogs, getPoolPrice, getAmounts, getTokenAssetPriceX96,
-        getTickSpacing, getFlashloanPoolOptions, getV3VaultAddress, getFlashLoanLiquidatorAddress,
-        executeTx, getTokenDecimals, getTokenSymbol, getPoolToToken,
-        getRevertUrlForDiscord, getExplorerUrlForDiscord, Q32, Q96 } = require('./lib/common')
+const { logWithTimestamp } = require('./lib/common')
+const { quoteUniversalRouter, registerErrorHandler, npmContract, provider, signer, setupWebsocket,
+  getPool, getAllLogs, getPoolPrice, getAmounts, getTokenAssetPriceX96,
+  getTickSpacing, getFlashloanPoolOptions, getV3VaultAddress, getFlashLoanLiquidatorAddress,
+  executeTx, getTokenDecimals, getTokenSymbol, getPoolToToken,
+  getRevertUrlForDiscord, getExplorerUrlForDiscord, Q32, Q96 } = require('./lib/common')
 
 const v3VaultContract = new ethers.Contract(getV3VaultAddress(), require("./contracts/V3Vault.json").abi, provider)
 const floashLoanLiquidatorContract = new ethers.Contract(getFlashLoanLiquidatorAddress(), require("./contracts/FlashloanLiquidator.json").abi, provider)
@@ -29,29 +29,44 @@ async function updateDebtExchangeRate() {
 }
 
 async function loadPositions() {
-  let adds = await getAllLogs(v3VaultContract.filters.Add())
-  let removes = await getAllLogs(v3VaultContract.filters.Remove())
+
+  let adds = (await getAllLogs(v3VaultContract.filters.Add())).filter(v => v !== 'latest')
+  console.log(adds)
+  let removes = (await getAllLogs(v3VaultContract.filters.Remove())).filter(v => v !== 'latest')
   let loadedPositions = 0
+
+
   // from newest to oldest - process each event once - remove deactivated positions
-  while (adds.length > 0) {
-      const event = adds[adds.length - 1]
-      const tokenId = v3VaultContract.interface.parseLog(event).args.tokenId
-      const isActive = removes.filter(e => tokenId.eq(v3VaultContract.interface.parseLog(e).args.tokenId) && (e.blockNumber > event.blockNumber || (e.blockNumber == event.blockNumber && e.logIndex > event.logIndex))).length === 0
+  for (let i = adds.length - 1; i > 0; i--) {
+
+    const event = adds[i];
+
+    if (event !== 'latest') {
+
+      const tokenId = v3VaultContract.interface.parseLog(event).args.tokenId;
+
+
+      const isActive = removes.filter(e => tokenId.eq(v3VaultContract.interface.parseLog(e).args.tokenId)
+        && (e.blockNumber > event.blockNumber || (e.blockNumber == event.blockNumber && e.logIndex > event.logIndex))).length === 0
+
       if (isActive) {
         await updatePosition(tokenId)
         loadedPositions++
       }
       adds = adds.filter(e => !v3VaultContract.interface.parseLog(e).args.tokenId.eq(tokenId))
+      logWithTimestamp(`Loaded ${loadedPositions} active positions`)
+    }
+
   }
-  logWithTimestamp(`Loaded ${loadedPositions} active positions`)
+
 }
 
 
 // loads all needed data for position
 async function updatePosition(tokenId) {
   // if processing - retry later
-  if (positions[tokenId] && (positions[tokenId].isChecking || positions[tokenId].isExecuting || positions[tokenId].isUpdating)) { 
-    setTimeout(async() => await updatePosition(tokenId), 10000)
+  if (positions[tokenId] && (positions[tokenId].isChecking || positions[tokenId].isExecuting || positions[tokenId].isUpdating)) {
+    setTimeout(async () => await updatePosition(tokenId), 10000)
     return
   }
 
@@ -60,7 +75,7 @@ async function updatePosition(tokenId) {
   } else {
     positions[tokenId].isUpdating = true
   }
-  
+
   try {
     const debtShares = await v3VaultContract.loans(tokenId)
     if (debtShares.gt(0)) {
@@ -68,7 +83,7 @@ async function updatePosition(tokenId) {
       const { liquidity, tickLower, tickUpper, fee, token0, token1 } = await npmContract.positions(tokenId);
       const tickSpacing = getTickSpacing(fee)
       const poolAddress = await getPool(token0, token1, fee)
-      
+
       const owner = await v3VaultContract.ownerOf(tokenId)
 
       // get current fees - for estimation
@@ -99,9 +114,9 @@ async function updatePosition(tokenId) {
     } else {
       delete positions[tokenId]
     }
-  } catch(err) {
+  } catch (err) {
     // retry on error after 1 min
-    setTimeout(async() => await updatePosition(tokenId), 60000)
+    setTimeout(async () => await updatePosition(tokenId), 60000)
     logWithTimestamp("Error updating position " + tokenId.toString(), err)
   }
 
@@ -112,7 +127,7 @@ async function updatePosition(tokenId) {
 
 // checks position 
 async function checkPosition(position) {
-  
+
   if (!position || position.isChecking || position.isExecuting || position.isUpdating) {
     return
   }
@@ -123,7 +138,7 @@ async function checkPosition(position) {
   // check if liquidation needed - step I  
   try {
     const poolPrice = await getPoolPrice(position.poolAddress)
-    const amounts = position.liquidity.gt(0) ? getAmounts(poolPrice.sqrtPriceX96, position.tickLower, position.tickUpper, position.liquidity) : { amount0: BigNumber.from(0), amount1 : BigNumber.from(0) }
+    const amounts = position.liquidity.gt(0) ? getAmounts(poolPrice.sqrtPriceX96, position.tickLower, position.tickUpper, position.liquidity) : { amount0: BigNumber.from(0), amount1: BigNumber.from(0) }
     amount0 = amounts.amount0.add(position.fees0)
     amount1 = amounts.amount1.add(position.fees1)
 
@@ -151,7 +166,7 @@ async function checkPosition(position) {
       }
     }
 
-  } catch (err) { 
+  } catch (err) {
     logWithTimestamp("Error checking position " + position.tokenId.toString(), err)
     info = null
   }
@@ -192,11 +207,11 @@ async function checkPosition(position) {
       const flashLoanPool = flashLoanPoolOptions.filter(o => !pools.includes(o.toLowerCase()))[0]
 
       const reward = info.liquidationValue.sub(info.liquidationCost)
-      
+
       const minReward = BigNumber.from(0) // 0% of reward must be recieved in assset after swaps and everything - rest in leftover token - no problem because flashloan liquidation
 
-      let params = {tokenId : position.tokenId, debtShares: position.debtShares, vault: v3VaultContract.address, flashLoanPool, amount0In, swapData0, amount1In, swapData1, minReward, deadline  } 
-            
+      let params = { tokenId: position.tokenId, debtShares: position.debtShares, vault: v3VaultContract.address, flashLoanPool, amount0In, swapData0, amount1In, swapData1, minReward, deadline }
+
       let useFlashloan = true
       let gasLimit
       try {
@@ -207,29 +222,29 @@ async function checkPosition(position) {
         if (enableNonFlashloanLiquidation) {
           // if there is any error with liquidation - fallback to non-flashloan liquidation
           useFlashloan = false
-          params = { tokenId : position.tokenId, amount0Min: BigNumber.from(0), amount1Min: BigNumber.from(0), recipient: signer.address, permitData: "0x", deadline}
+          params = { tokenId: position.tokenId, amount0Min: BigNumber.from(0), amount1Min: BigNumber.from(0), recipient: signer.address, permitData: "0x", deadline }
           gasLimit = await v3VaultContract.connect(signer).estimateGas.liquidate(params)
         } else {
           throw err
         }
       }
-              
-      const tx = useFlashloan ? 
-                    await floashLoanLiquidatorContract.populateTransaction.liquidate(params, { gasLimit: gasLimit.mul(125).div(100) }) : 
-                    await v3VaultContract.populateTransaction.liquidate(params, { gasLimit: gasLimit.mul(125).div(100) })
 
-      position.isExecuting = true 
+      const tx = useFlashloan ?
+        await floashLoanLiquidatorContract.populateTransaction.liquidate(params, { gasLimit: gasLimit.mul(125).div(100) }) :
+        await v3VaultContract.populateTransaction.liquidate(params, { gasLimit: gasLimit.mul(125).div(100) })
+
+      position.isExecuting = true
       const { hash, error } = await executeTx(tx, async (success) => {
-          position.isExecuting = false
+        position.isExecuting = false
       })
 
       if (hash) {
-          const msg = `Executing liquidation ${useFlashloan ? "with" : "without" } flashloan for ${getRevertUrlForDiscord(position.tokenId)} with reward of ${ethers.utils.formatUnits(reward, assetDecimals)} ${assetSymbol} - ${getExplorerUrlForDiscord(hash)}`
-          logWithTimestamp(msg)
+        const msg = `Executing liquidation ${useFlashloan ? "with" : "without"} flashloan for ${getRevertUrlForDiscord(position.tokenId)} with reward of ${ethers.utils.formatUnits(reward, assetDecimals)} ${assetSymbol} - ${getExplorerUrlForDiscord(hash)}`
+        logWithTimestamp(msg)
       } else {
-          throw error
+        throw error
       }
-    } catch (err) { 
+    } catch (err) {
       logWithTimestamp("Error liquidating position " + position.tokenId.toString(), err)
     }
   } else if (info) {
@@ -263,7 +278,7 @@ async function checkAllPositions() {
 }
 
 async function run() {
-  
+
   registerErrorHandler()
 
   asset = (await v3VaultContract.asset()).toLowerCase()
@@ -273,58 +288,59 @@ async function run() {
   await updateDebtExchangeRate()
 
   // setup websockets for monitoring changes to positions
-  setupWebsocket([
-      {
-          filter: v3VaultContract.filters.Add(),
-          handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
-      },
-      {
-          filter: v3VaultContract.filters.Remove(),
-          handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
-      },
-      {
-          filter: v3VaultContract.filters.Borrow(),
-          handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
-      },
-      {
-          filter: v3VaultContract.filters.Repay(),
-          handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
-      },
-      {
-          filter: v3VaultContract.filters.WithdrawCollateral(),
-          handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
-      },
-      {
-          filter: npmContract.filters.IncreaseLiquidity(),
-          handler: async (e) => {
-            const tokenId = npmContract.interface.parseLog(e).args.tokenId
-            if (positions[tokenId]) {
-              await updatePosition(tokenId) 
-            }
-          }
-      }
-    ], async function(poolAddress) {
-   
+  // setupWebsocket([
+  //   {
+  //     filter: v3VaultContract.filters.Add(),
+  //     handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
+  //   },
+  //   {
+  //     filter: v3VaultContract.filters.Remove(),
+  //     handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
+  //   },
+  //   {
+  //     filter: v3VaultContract.filters.Borrow(),
+  //     handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
+  //   },
+  //   {
+  //     filter: v3VaultContract.filters.Repay(),
+  //     handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
+  //   },
+  //   {
+  //     filter: v3VaultContract.filters.WithdrawCollateral(),
+  //     handler: async (e) => { await updatePosition(v3VaultContract.interface.parseLog(e).args.tokenId) }
+  //   },
+  //   {
+  //     filter: npmContract.filters.IncreaseLiquidity(),
+  //     handler: async (e) => {
+  //       const tokenId = npmContract.interface.parseLog(e).args.tokenId
+  //       if (positions[tokenId]) {
+  //         await updatePosition(tokenId)
+  //       }
+  //     }
+  //   }
+  // ], async function (poolAddress) {
 
-      const time = new Date()
-      // every 5 minutes
-      if (time.getTime() > lastWSLifeCheck + 300000) {
-          logWithTimestamp("WS Live check", time.toISOString())
-          lastWSLifeCheck = time.getTime()
-      }
 
-      // if price reference pool price changed - check all positions with affected token
-      const affectedToken = getPoolToToken(asset, poolAddress)
-      if (affectedToken) {
-        const toCheckPositions = Object.values(positions).filter(p => p.token0 === affectedToken ||  p.token1 === affectedToken)
-        for (const position of toCheckPositions) {
-            await checkPosition(position)
-        }
-      }
-  })
+  //   const time = new Date()
+  //   // every 5 minutes
+  //   if (time.getTime() > lastWSLifeCheck + 300000) {
+  //     logWithTimestamp("WS Live check", time.toISOString())
+  //     lastWSLifeCheck = time.getTime()
+  //   }
+
+  //   // if price reference pool price changed - check all positions with affected token
+  //   const affectedToken = getPoolToToken(asset, poolAddress)
+  //   if (affectedToken) {
+  //     const toCheckPositions = Object.values(positions).filter(p => p.token0 === affectedToken || p.token1 === affectedToken)
+  //     for (const position of toCheckPositions) {
+  //       await checkPosition(position)
+  //     }
+  //   }
+  // })
 
   await loadPositions()
 
+  console.log(1111)
   setInterval(async () => { await updateDebtExchangeRate() }, 60000)
 
   // Set up regular interval checks
